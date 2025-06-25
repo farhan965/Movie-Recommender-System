@@ -1,0 +1,279 @@
+
+def Testing():
+    for blob in container_client.list_blobs():
+
+        print(f"Reading file: {blob.name}")  # Print each file name
+
+        if "spot" in blob.name:
+            df_emails = pd.read_sql(
+                "select * from cte5  ",
+                dev_conn,
+            )
+            df_emails = df_emails.astype(str)
+            df_CRD = pd.read_sql("Select * From Staging.Mapping_Tabl", dev_conn)
+            df_CRD = df_CRD.astype(str)
+            email_domain_mapping_df = pd.read_sql(
+                "Select * From dummy", dev_conn
+            )
+            email_domain_mapping_df = email_domain_mapping_df.astype(str)
+            Contact_Id_df = pd.read_sql(
+                "select Saleorce_Id from cte where RN=1",
+                dev_conn,
+            )
+            Contact_Id_df = Contact_Id_df.astype(str)
+            name_city_state_comp_df = pd.read_sql(
+                "select * from dummy",
+                dev_conn,
+            )
+            name_city_state_comp_df = name_city_state_comp_df.astype(str)
+        else:
+            df_emails = pd.read_sql(
+                "with cte as (select * from cte5 ",
+                dev_conn,
+            )
+            df_emails = df_emails.astype(str)
+            df_CRD = pd.read_sql("Select * From Staging.Mapping_Tabl", dev_conn)
+            df_CRD = df_CRD.astype(str)
+            Contact_Id_df = pd.read_sql(
+                "select * from cte where RN=1",
+                dev_conn,
+            )
+            Contact_Id_df = Contact_Id_df.astype(str)
+            email_domain_mapping_df = pd.read_sql(
+                "Select * From dummy", dev_conn
+            )
+            email_domain_mapping_df = email_domain_mapping_df.astype(str)
+            name_city_state_comp_df = pd.read_sql(
+                "select * from dummy",
+                dev_conn,
+            )
+            name_city_state_comp_df = name_city_state_comp_df.astype(str)
+
+        # Get BlobClient
+
+        blob_client = blob_service_client.get_blob_client(
+            container=container_name, blob=blob.name
+        )
+
+        # Download blob as a stream
+
+        blob_data = blob_client.download_blob().readall()
+
+        # Convert to BytesIO
+
+        file_stream = BytesIO(blob_data)
+        source_df = pd.read_excel(file_stream)
+        # source_df = source_df.fillna("")
+        source_df = source_df.replace(r"^\s*$", np.nan, regex=True)
+        source_df = source_df.astype(str)
+        source_df = source_df.replace("nan", "blank_field")
+        if "First Name" in source_df.columns:
+            source_df = source_df.rename(
+                columns={"First Name": "FirstName", "Last Name": "LastName"}
+            )
+        if "Firm" in source_df.columns:
+            source_df = source_df.rename(columns={"Firm": "Company"})
+        if "Rep CRD Number" in source_df.columns:
+            source_df = source_df.rename(columns={"Rep CRD Number": "CRD_C"})
+        source_df, df_CRD, name_city_state_comp_df = preprocess_source_df(
+            source_df, df_CRD, name_city_state_comp_df
+        )
+        combined_match_df, unmatch_df = process_data(
+            source_df, name_city_state_comp_df, email_domain_mapping_df, df_emails, df_CRD
+        )
+        result = pd.concat([combined_match_df, unmatch_df], ignore_index=True)
+
+        if "ID_Criteria_Selection" in result.columns:
+            result.loc[
+                result["ID_Criteria_Selection"] == "Multiple Records Found", "_Matched_ID"
+            ] = None
+            condition = (result["Match Percentage"] == 0) & (
+                result["Match Criteria"] == "Name Partially Matched"
+            )
+            result.loc[
+                condition,
+                ["Match Criteria", "_Criteria_Matched", "ID_Criteria_Selection"],
+            ] = ["Name field is empty", "No Match", "No Match"]
+
+        result_ = result[result["Match Criteria"] == "Fully Matched"]
+
+        if "Matched_Email" in result_.columns:
+            result_ = result_.drop(
+                columns=[
+                    "LastModifiedDate_x",
+                    "Cr_Matched_x",
+                    "LastModifiedDate_y",
+                    "Cr_Matched_y",
+                ]
+            )
+
+        if "Matching Case" in result_.columns:
+            result_ = result_.drop(columns=["Matching Case"])
+
+        result_ = result_.replace("blank_field", np.nan)
+
+        source_sc_df = result[result["Match Criteria"] != "Fully Matched"]
+
+        if "Matched_Email" in source_sc_df.columns:
+            source_sc_df = source_sc_df.drop(
+                columns=[
+                    "LastModifiedDate_x",
+                    "Cr_Matched_x",
+                    "LastModifiedDate_y",
+                    "Cr_Matched_y",
+                    "Matched_Email",
+                ]
+            )
+
+        if all(
+            col not in source_sc_df.columns
+            for col in ["Matching Case", "ID_Criteria_Selection"]
+        ):
+            source_sc_df = source_sc_df.drop(
+                columns=[
+                    "UID",
+                    "Match Criteria",
+                    "_Matched_ID",
+                    "_Criteria_Matched",
+                    "Match Percentage",
+                    "InsertMatchDateTime",
+                ]
+            )
+        else:
+            source_sc_df = source_sc_df.drop(
+                columns=[
+                    "Matching Case",
+                    "UID",
+                    "Match Criteria",
+                    "_Matched_ID",
+                    "_Criteria_Matched",
+                    "Match Percentage",
+                    "InsertMatchDateTime",
+                    "ID_Criteria_Selection",
+                ]
+            )
+
+        df_emails, df_CRD, name_city_state_comp_df = get_SC_Match_objects()
+        email_domain_mapping_df = pd.read_sql("Select * From DUMMY", dev_conn)
+        email_domain_mapping_df = email_domain_mapping_df.astype(str)
+        firm_office_sc_df = pd.read_sql(
+            "Select * From DUMMY", dev_conn
+        )
+        firm_office_sc_df = firm_office_sc_df.astype(str)
+        source_df = source_sc_df
+        source_df, df_CRD, name_city_state_comp_df = preprocess_source_df(
+            source_df, df_CRD, name_city_state_comp_df
+        )
+        combined_match_df, unmatch_df = process_data(
+            source_df, name_city_state_comp_df, email_domain_mapping_df, df_emails, df_CRD
+        )
+        result_sc = pd.concat([combined_match_df, unmatch_df], ignore_index=True)
+
+        if "ID_Criteria_Selection" in result_sc.columns:
+            result_sc.loc[
+                result_sc["ID_Criteria_Selection"] == "Multiple Records Found",
+                "_Matched_ID",
+            ] = None
+            condition = (result_sc["Match Percentage"] == 0) & (
+                result_sc["Match Criteria"] == "Name Partially Matched"
+            )
+            result_sc.loc[
+                condition,
+                ["Match Criteria", "_Criteria_Matched", "ID_Criteria_Selection"],
+            ] = ["Name field is empty", "No Match", "No Match"]
+
+        if "Matched_Email" in result_sc.columns:
+            result_sc = result_sc.drop(
+                columns=[
+                    "LastModifiedDate_x",
+                    "Cr_Matched_x",
+                    "LastModifiedDate_y",
+                    "Cr_Matched_y",
+                ]
+            )
+
+        if "Matching Case" in result_sc.columns:
+            result_sc = result_sc.drop(columns=["Matching Case"])
+
+        result_sc = result_sc.rename(
+            columns={
+                "_Matched_ID": "SC_Matched_ID",
+                "_Criteria_Matched": "SC_Criteria_Matched",
+            }
+        )
+
+        result_sc = result_sc.merge(
+            firm_office_sc_df, left_on="SC_Matched_ID", right_on="SC_CONTACT_ID", how="left"
+        )
+
+        result_sc = result_sc.merge(
+            Contact_Id_df, left_on="SC_Matched_ID", right_on="ID__c", how="left"
+        )
+
+        result_sc = result_sc.drop(
+            columns=[
+                "RN",
+                "Cr_Matched",
+                "LastModifiedDate",
+                "SC_C",
+                "SC_COID",
+                "Rep_",
+            ]
+        )
+        result_sc = result_sc.replace("blank_field", np.nan)
+
+        if "FirstName" in result_sc.columns:
+            result_sc = result_sc.rename(
+                columns={"FirstName": "First Name", "LastName": "Last Name"}
+            )
+        if "Company" in result_sc.columns:
+            result_sc = result_sc.rename(columns={"Company": "Firm"})
+        if "CRD_C" in result_sc.columns:
+            result_sc = result_sc.rename(columns={"CRD_C": "Rep C Number"})
+
+        if "FirstName" in result_.columns:
+            result_ = result_.rename(
+                columns={"FirstName": "First Name", "LastName": "Last Name"}
+            )
+        if "Company" in result_.columns:
+            result_ = result_.rename(columns={"Company": "Firm"})
+        if "CRD_C" in result_.columns:
+            result_ = result_.rename(columns={"CRD_C": "Rep C Number"})
+
+        if "Source Record" in result_.columns:
+            result_ = result_.drop(columns=["Source Record", "Match Record"])
+    
+        if "Source Record" in result_sc.columns:
+            result_sc = result_sc.drop(columns=["Source Record", "Match Record"])
+        
+        
+        if "First Name" in result_sc.columns:
+            condition=((result_sc['First Name'].isnull()) | (result_sc['Last Name'].isnull())) & (result_sc['ID_Criteria_Selection']!='Id selected from recent Last modified date')
+            cols_to_update=['Match Criteria','SC_Matched_ID','SC_Criteria_Matched','Match Percentage','ID_Criteria_Selection','Saleorce_Id','Last Name Match %','First Name Match %']
+            for col in cols_to_update:
+                result_sc.loc[condition, col]=np.nan
+
+        # output excel to blob
+        excel_buffer = BytesIO()
+        with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
+            result_.to_excel(writer, sheet_name="_Match_Output", index=False)
+            result_sc.to_excel(writer, sheet_name="SC_Match_Output", index=False)
+        excel_buffer.seek(0)
+
+        filename = blob.name.split(".")[0] + "_output.xlsx"
+        blob_client = blob_service_client.get_blob_client(
+            container="output", blob=filename
+        )
+        blob_client.upload_blob(excel_buffer.read(), overwrite=True)
+
+
+    end_time = time.time()
+
+    print(f"Execution time: {end_time - start_time:.2f} seconds")
+
+    return 1
+
+
+
+
+
