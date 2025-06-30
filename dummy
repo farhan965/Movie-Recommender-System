@@ -5,7 +5,7 @@ import os
 from io import BytesIO
 from azure.storage.blob import BlobServiceClient,BlobClient
 
-from files.contact_match_final_f6_copy import ContactMatchTesting
+from files.contact_match_final_f6_copy import MatchTesting
 
 
 
@@ -29,7 +29,7 @@ def CM():
          source_df=pd.read_excel(BytesIO(blob_data))
  
         #  Process the blob
-         df1, df2 = ContactMatchTesting(source_df)
+         df1, df2 = MatchTesting(source_df)
         
         # output excel to blob
          excel_buffer = BytesIO()
