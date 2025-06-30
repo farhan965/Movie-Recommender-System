@@ -1,0 +1,70 @@
+import azure.functions as func
+import logging
+import pandas as pd
+import os
+from io import BytesIO
+from azure.storage.blob import BlobServiceClient,BlobClient
+
+from files.contact_match_final_f6_copy import ContactMatchTesting
+
+
+
+
+# Blob connection string from environment variable
+# CONNECTION_STRING = os.environ["AzureWebJobsStorage"]
+CONNECTION_STRING= os.environ.get("blob_connection_string")
+INPUT_CONTAINER = "matching-input"
+OUTPUT_CONTAINER= "matching-output"
+
+def CM():
+    blob_service_client = BlobServiceClient.from_connection_string(CONNECTION_STRING)
+    container_client = blob_service_client.get_container_client(INPUT_CONTAINER)
+ 
+    blobs = container_client.list_blobs()
+ 
+    for blob in blobs:
+         print(f"Processing: {blob.name}")
+         blob_client = container_client.get_blob_client(blob.name)
+         blob_data = blob_client.download_blob().readall()
+         source_df=pd.read_excel(BytesIO(blob_data))
+ 
+        #  Process the blob
+         df1, df2 = ContactMatchTesting(source_df)
+        
+        # output excel to blob
+         excel_buffer = BytesIO()
+         with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
+            df1.to_excel(writer, sheet_name="SF_Match_Output", index=False)
+            df2.to_excel(writer, sheet_name="SC_Match_Output", index=False)
+         excel_buffer.seek(0)
+
+         filename = blob.name.split(".")[0] + "_output.xlsx"
+         blob_client = blob_service_client.get_blob_client(
+            container=OUTPUT_CONTAINER, blob=filename
+        )
+         blob_client.upload_blob(excel_buffer.read(), overwrite=True)
+    return "Files are Processed"
+        
+ 
+ 
+
+
+
+
+
+
+
+
+
+
+app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
+
+@app.route(route="Match")
+
+def ContactMatch(req: func.HttpRequest) -> func.HttpResponse:
+    logging.info("HTTP trigger Function processed a request")
+    result=CM()
+    
+    return func.HttpResponse(f"result is -> {result}",status_code=200)
+
+
